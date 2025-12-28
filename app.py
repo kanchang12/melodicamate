@@ -72,17 +72,19 @@ def create_app() -> Flask:
             400,
         )
 
-    @app.route("/health", methods=["GET"])
+    @app.route("/health", methods=["GET", "POST"])
     def health():
         return jsonify({"status": "ok"})
 
-    @app.route("/", methods=["GET"])
+    @app.route("/", methods=["GET", "POST"])
     def root():
         return jsonify({"status": "ok", "message": "MelodicaMate backend is running", "routes": ["/health", "/api/coach/exercise", "/api/transcribe/notes-to-numbers", "/api/song/request", "/api/tts"]})
 
-    @app.route("/api/transcribe/notes-to-numbers", methods=["POST"])
+    @app.route("/api/transcribe/notes-to-numbers", methods=["POST", "GET"])
     @rate_limited
     def notes_to_numbers():
+        if request.method == "GET":
+            return jsonify({"message": "POST notes to transcribe.", "example": {"key_tonic": "C", "mode": "major", "accidental_pref": "sharps", "notes": [{"midi": 60, "t0_ms": 0, "t1_ms": 500, "conf": 0.9}]}})
         data = request.get_json(force=True, silent=True) or {}
         key_tonic = data.get("key_tonic", "C")
         mode = data.get("mode", "major")
@@ -97,9 +99,11 @@ def create_app() -> Flask:
         note_names = [midi_to_note_name(n.get("midi")) for n in notes]
         return jsonify({"numbers": numbers, "note_names": note_names})
 
-    @app.route("/api/coach/exercise", methods=["POST"])
+    @app.route("/api/coach/exercise", methods=["POST", "GET"])
     @rate_limited
     def coach_exercise():
+        if request.method == "GET":
+            return jsonify({"message": "POST exercise data for coaching.", "expected_fields": ["exercise_id", "key_tonic", "mode", "notation", "notes", "metrics"]})
         data = request.get_json(force=True, silent=True) or {}
         metrics = data.get("metrics", {}) or {}
         if metrics.get("suspected_recording"):
@@ -163,9 +167,11 @@ def create_app() -> Flask:
             }
         )
 
-    @app.route("/api/song/request", methods=["POST"])
+    @app.route("/api/song/request", methods=["POST", "GET"])
     @rate_limited
     def song_request():
+        if request.method == "GET":
+            return jsonify({"message": "POST a song query to search public-domain library."})
         data = request.get_json(force=True, silent=True) or {}
         query = (data.get("query") or "").strip()
         desired_key = data.get("desired_key", "C")
@@ -220,9 +226,11 @@ def create_app() -> Flask:
             }
         )
 
-    @app.route("/api/tts", methods=["POST"])
+    @app.route("/api/tts", methods=["POST", "GET"])
     @rate_limited
     def tts():
+        if request.method == "GET":
+            return jsonify({"message": "POST text to synthesize.", "limit_chars": APP_TTS_CHAR_LIMIT})
         data = request.get_json(force=True, silent=True) or {}
         text = (data.get("text") or "").strip()
         voice_id = data.get("voice_id")
