@@ -177,46 +177,37 @@ def create_app() -> Flask:
             )
 
         classification = gemini.classify_song_request(query, data.get("composer_or_artist"))
-        if not classification.get("likely_public_domain"):
-            return (
-                jsonify(
-                    {
-                        "found": False,
-                        "refused": True,
-                        "reason": "copyright_or_unknown",
-                        "message": "Sorry, I can’t fetch that. Please sing/hum/play it live instead.",
-                        "canonical": classification,
-                    }
-                ),
-                200,
-            )
-
-        match = pd_library.find_song(query, classification)
-        if not match:
+        # Ask Gemini to provide numbers/lyrics directly
+        song_data = gemini.generate_song_numbers(query)
+        if not song_data.get("found"):
             return (
                 jsonify(
                     {
                         "found": False,
                         "refused": False,
-                        "message": "No open version found locally. Please sing or play it live.",
+                        "message": "No open version found. Please sing or play it live.",
                         "canonical": classification,
+                        "notes": song_data.get("notes", ""),
                     }
                 ),
                 200,
             )
 
-        numbers = match["numbers"]
+        numbers = song_data.get("numbers", [])
+        lyrics = song_data.get("lyrics", "")
         note_names = [pd_library.number_to_note_name(token, desired_key, mode) for token in numbers]
         return jsonify(
             {
                 "found": True,
                 "refused": False,
-                "canonical": match["meta"],
+                "canonical": classification,
                 "key": desired_key,
                 "mode": mode,
                 "numbers": numbers,
                 "note_names": note_names,
-                "source": "pd_library",
+                "lyrics": lyrics,
+                "source": "gemini",
+                "notes": song_data.get("notes", ""),
             }
         )
 
