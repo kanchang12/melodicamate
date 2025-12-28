@@ -124,22 +124,16 @@ def create_app() -> Flask:
         mode = data.get("mode", "major")
         notation = data.get("notation", "numbers")
 
-        if exercise_id not in EXPECTED_EXERCISES:
-            return (
-                jsonify(
-                    {
-                        "error": "unknown_exercise",
-                        "message": "Exercise not recognized.",
-                        "known_exercises": list(EXPECTED_EXERCISES.keys()),
-                    }
-                ),
-                400,
-            )
-
         played_numbers = map_notes_to_numbers(notes, key_tonic, mode, "sharps")
-        expected_numbers = expected_numbers_for_exercise(exercise_id, key_tonic, mode)
-        accuracy, wrong_notes = compare_sequences(expected_numbers, played_numbers)
-        mistake_summary = build_mistake_summary(wrong_notes)
+        if exercise_id not in EXPECTED_EXERCISES:
+            # Allow free-play: no strict expectations; just echo back.
+            expected_numbers = []
+            accuracy = 0.0
+            mistake_summary = {"issues": [], "summary": "Free play session."}
+        else:
+            expected_numbers = expected_numbers_for_exercise(exercise_id, key_tonic, mode)
+            accuracy, wrong_notes = compare_sequences(expected_numbers, played_numbers)
+            mistake_summary = build_mistake_summary(wrong_notes)
 
         prompt_payload = {
             "exercise_id": exercise_id,
