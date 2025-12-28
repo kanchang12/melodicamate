@@ -76,6 +76,10 @@ def create_app() -> Flask:
     def health():
         return jsonify({"status": "ok"})
 
+    @app.route("/", methods=["GET"])
+    def root():
+        return jsonify({"status": "ok", "message": "MelodicaMate backend is running", "routes": ["/health", "/api/coach/exercise", "/api/transcribe/notes-to-numbers", "/api/song/request", "/api/tts"]})
+
     @app.route("/api/transcribe/notes-to-numbers", methods=["POST"])
     @rate_limited
     def notes_to_numbers():
