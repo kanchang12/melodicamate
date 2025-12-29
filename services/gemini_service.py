@@ -85,12 +85,30 @@ class GeminiService:
                 "error": "gemini_failed",
             }
         prompt = (
-            "You are a music assistant. Given a song title (and optional artist), return the FULL primary melody "
-            "(cover verse and chorus) as scale-degree numbers in a likely key. Include a short lyrics snippet if known. "
-            "If the melody repeats, include the repeats so the sequence is complete (aim for 32–96 notes). "
-            "Respond with JSON only, fields: found (bool), numbers (array of strings), lyrics (string), notes (string). "
-            "Do not include code fences or prose. "
-            f"Song: {query}"
+            "You are a professional music transcription assistant. Given a song title (and optional artist), "
+            "return the ACTUAL primary melody from the real song as scale-degree numbers (solfege) relative to the tonic.\n\n"
+            "IMPORTANT RULES:\n"
+            "1. Return the REAL, RECOGNIZABLE melody from the actual song - NOT random notes\n"
+            "2. Include verse AND chorus (aim for 32-96 notes total with repeats)\n"
+            "3. Organize into MEASURES based on time signature (typically 4 beats per measure in 4/4 time)\n"
+            "4. Use appropriate tempo for the song (e.g., 60-80 bpm for ballads, 100-140 for upbeat)\n"
+            "5. Identify the correct key and mode (major/minor) for the song\n"
+            "6. For rhythm: use single notes per beat OR break beats into smaller durations\n"
+            "7. Include a short lyrics snippet from the song if known\n\n"
+            "Response format (JSON only, no code fences):\n"
+            "{\n"
+            "  \"found\": true/false,\n"
+            "  \"key\": \"C\",  // tonic note (C, D, E, F, G, A, B, with # or b)\n"
+            "  \"mode\": \"major\",  // major or minor\n"
+            "  \"time_signature\": \"4/4\",\n"
+            "  \"tempo_bpm\": 100,  // realistic tempo for the song\n"
+            "  \"measures\": [[\"1\",\"2\",\"3\",\"4\"],[\"5\",\"6\",\"7\",\"1\"]],  // organized by measure\n"
+            "  \"numbers\": [\"1\",\"2\",\"3\",\"4\",\"5\",...],  // flattened from measures\n"
+            "  \"lyrics\": \"First line of song\",\n"
+            "  \"notes\": \"Additional context\"\n"
+            "}\n\n"
+            f"Song to transcribe: {query}\n\n"
+            "Remember: Return the ACTUAL melody that people would recognize, not random sequences!"
         )
         try:
             resp = self.model.generate_content(prompt)
