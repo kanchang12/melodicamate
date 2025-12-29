@@ -11,11 +11,12 @@ logger = logging.getLogger("melodicamate.gemini")
 class GeminiService:
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.config_error: str = ""
         if self.api_key:
             try:
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel("gemini-pro")
+                self.model = genai.GenerativeModel(self.model_name)
             except Exception as exc:  # pragma: no cover
                 self.model = None
                 self.config_error = f"Gemini init failed: {exc}"
