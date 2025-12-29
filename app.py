@@ -244,15 +244,21 @@ def create_app() -> Flask:
 
         numbers = song_data.get("numbers", [])
         lyrics = song_data.get("lyrics", "")
-        note_names = [pd_library.number_to_note_name(token, desired_key, mode) for token in numbers]
+        key = song_data.get("key") or desired_key
+        mode = song_data.get("mode") or mode
+        tempo = song_data.get("tempo_bpm")
+        measures = song_data.get("measures", [])
+        note_names = [pd_library.number_to_note_name(token, key, mode) for token in numbers]
         return jsonify(
             {
                 "found": True,
                 "refused": False,
                 "canonical": classification,
-                "key": desired_key,
+                "key": key,
                 "mode": mode,
                 "numbers": numbers,
+                "measures": measures,
+                "tempo_bpm": tempo,
                 "note_names": note_names,
                 "lyrics": lyrics,
                 "source": "gemini",

@@ -61,9 +61,19 @@ class GeminiService:
     def generate_song_numbers(self, query: str) -> Dict:
         """
         Use Gemini to return the full primary melody (verse + chorus) as scale-degree numbers (relative to tonic) and lyrics snippet if known.
-        Expected JSON:
-        {"found":true/false,"numbers":["1","2",...],"lyrics":"...","notes":"..."}
-        numbers should cover the main melody (at least verse and chorus, ~32-96 notes) in order.
+        Expected JSON (do not wrap in code fences):
+        {
+          "found": true/false,
+          "key": "G",
+          "mode": "major",
+          "time_signature": "4/4",
+          "tempo_bpm": 90,
+          "measures": [["1","2","3","4"],["5","6","7","1"]],
+          "numbers": ["1","2",...],  // flattened
+          "lyrics": "snippet",
+          "notes": "any notes"
+        }
+        numbers should cover the main melody (verse and chorus, ~32-96 notes) in order, with repeats included.
         """
         if not self._enabled():
             notes = self.config_error or "Gemini disabled"
@@ -108,9 +118,19 @@ class GeminiService:
                     "notes": f"Gemini parse error: {exc}",
                     "error": "gemini_failed",
                 }
+            numbers = data.get("numbers") or []
+            measures = data.get("measures") or []
+            if not numbers and measures:
+                # flatten measures to numbers
+                numbers = [tok for bar in measures for tok in bar]
             return {
                 "found": bool(data.get("found")),
-                "numbers": data.get("numbers", []),
+                "key": data.get("key"),
+                "mode": data.get("mode"),
+                "time_signature": data.get("time_signature"),
+                "tempo_bpm": data.get("tempo_bpm"),
+                "measures": measures,
+                "numbers": numbers,
                 "lyrics": data.get("lyrics", ""),
                 "notes": data.get("notes", ""),
             }
