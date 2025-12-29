@@ -1,8 +1,8 @@
 import json
+import logging
 import os
 from typing import Dict
 
-import logging
 import google.generativeai as genai
 
 logger = logging.getLogger("melodicamate.gemini")
@@ -11,14 +11,20 @@ logger = logging.getLogger("melodicamate.gemini")
 class GeminiService:
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
+        self.config_error: str = ""
         if self.api_key:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel("gemini-pro")
+            try:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel("gemini-pro")
+            except Exception as exc:  # pragma: no cover
+                self.model = None
+                self.config_error = f"Gemini init failed: {exc}"
+                logger.error(self.config_error)
         else:
             self.model = None
 
     def _enabled(self) -> bool:
-        return bool(self.api_key and self.model)
+        return bool(self.api_key and self.model and not self.config_error)
 
     def generate_coaching_text(self, payload: Dict) -> str:
         accuracy = payload.get("accuracy_pct", 0)
@@ -58,7 +64,14 @@ class GeminiService:
         {"found":true/false,"numbers":["1","2",...],"lyrics":"...","notes":"..."}
         """
         if not self._enabled():
-            return {"found": False, "numbers": [], "lyrics": "", "notes": "Gemini disabled"}
+            notes = self.config_error or "Gemini disabled"
+            return {
+                "found": False,
+                "numbers": [],
+                "lyrics": "",
+                "notes": notes,
+                "error": "gemini_failed",
+            }
         prompt = (
             "You are a music assistant. Given a song title (and optional artist), return its main melody "
             "as scale-degree numbers in a likely key, plus one-line lyrics snippet if known. "
@@ -68,11 +81,29 @@ class GeminiService:
         try:
             resp = self.model.generate_content(prompt)
             if not resp or not resp.text:
-                return {"found": False, "numbers": [], "lyrics": "", "notes": "No response"}
+                logger.error("Gemini song lookup returned empty response")
+                return {
+                    "found": False,
+                    "numbers": [],
+                    "lyrics": "",
+                    "notes": "Gemini empty response",
+                    "error": "gemini_failed",
+                }
+            logger.info("Gemini raw song response: %r", resp.text)
             text = resp.text.strip().strip("`")
             if text.startswith("json"):
                 text = text[text.find("{") :]
-            data = json.loads(text)
+            try:
+                data = json.loads(text)
+            except Exception as exc:
+                logger.error("Gemini parse error: %s; raw=%r", exc, resp.text)
+                return {
+                    "found": False,
+                    "numbers": [],
+                    "lyrics": "",
+                    "notes": f"Gemini parse error: {exc}",
+                    "error": "gemini_failed",
+                }
             return {
                 "found": bool(data.get("found")),
                 "numbers": data.get("numbers", []),
@@ -80,8 +111,14 @@ class GeminiService:
                 "notes": data.get("notes", ""),
             }
         except Exception as exc:  # pragma: no cover
-            logger.warning("Gemini song lookup failed: %s", exc)
-            return {"found": False, "numbers": [], "lyrics": "", "notes": "Gemini error"}
+            logger.error("Gemini song lookup failed: %s", exc)
+            return {
+                "found": False,
+                "numbers": [],
+                "lyrics": "",
+                "notes": f"Gemini error: {exc}",
+                "error": "gemini_failed",
+            }
 
     def _fallback(self, base: str, accuracy: float) -> str:
         if accuracy >= 90:

@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import os
@@ -78,13 +77,35 @@ def create_app() -> Flask:
 
     @app.route("/", methods=["GET", "POST"])
     def root():
-        return jsonify({"status": "ok", "message": "MelodicaMate backend is running", "routes": ["/health", "/api/coach/exercise", "/api/transcribe/notes-to-numbers", "/api/song/request", "/api/tts"]})
+        return jsonify(
+            {
+                "status": "ok",
+                "message": "MelodicaMate backend is running",
+                "routes": [
+                    "/health",
+                    "/api/coach/exercise",
+                    "/api/transcribe/notes-to-numbers",
+                    "/api/song/request",
+                    "/api/tts",
+                ],
+            }
+        )
 
     @app.route("/api/transcribe/notes-to-numbers", methods=["POST", "GET"])
     @rate_limited
     def notes_to_numbers():
         if request.method == "GET":
-            return jsonify({"message": "POST notes to transcribe.", "example": {"key_tonic": "C", "mode": "major", "accidental_pref": "sharps", "notes": [{"midi": 60, "t0_ms": 0, "t1_ms": 500, "conf": 0.9}]}})
+            return jsonify(
+                {
+                    "message": "POST notes to transcribe.",
+                    "example": {
+                        "key_tonic": "C",
+                        "mode": "major",
+                        "accidental_pref": "sharps",
+                        "notes": [{"midi": 60, "t0_ms": 0, "t1_ms": 500, "conf": 0.9}],
+                    },
+                }
+            )
         data = request.get_json(force=True, silent=True) or {}
         key_tonic = data.get("key_tonic", "C")
         mode = data.get("mode", "major")
@@ -103,7 +124,19 @@ def create_app() -> Flask:
     @rate_limited
     def coach_exercise():
         if request.method == "GET":
-            return jsonify({"message": "POST exercise data for coaching.", "expected_fields": ["exercise_id", "key_tonic", "mode", "notation", "notes", "metrics"]})
+            return jsonify(
+                {
+                    "message": "POST exercise data for coaching.",
+                    "expected_fields": [
+                        "exercise_id",
+                        "key_tonic",
+                        "mode",
+                        "notation",
+                        "notes",
+                        "metrics",
+                    ],
+                }
+            )
         data = request.get_json(force=True, silent=True) or {}
         metrics = data.get("metrics", {}) or {}
         if metrics.get("suspected_recording"):
@@ -112,7 +145,7 @@ def create_app() -> Flask:
                     {
                         "refused": True,
                         "reason": "suspected_recording",
-                        "message": "Sorry — this sounds like a recording. I can only analyze live singing or live playing.",
+                        "message": "Sorry, this sounds like a recording. I can only analyze live singing or live playing.",
                     }
                 ),
                 403,
@@ -177,9 +210,25 @@ def create_app() -> Flask:
             )
 
         classification = gemini.classify_song_request(query, data.get("composer_or_artist"))
-        # Ask Gemini to provide numbers/lyrics directly
         song_data = gemini.generate_song_numbers(query)
         if not song_data.get("found"):
+            error = song_data.get("error")
+            notes = song_data.get("notes", "")
+            if error:
+                logger.error("Gemini lookup failed: %s | notes=%s", error, notes)
+                return (
+                    jsonify(
+                        {
+                            "found": False,
+                            "refused": False,
+                            "error": error,
+                            "message": "Gemini call failed or returned invalid data.",
+                            "canonical": classification,
+                            "notes": notes,
+                        }
+                    ),
+                    502,
+                )
             return (
                 jsonify(
                     {
@@ -187,7 +236,7 @@ def create_app() -> Flask:
                         "refused": False,
                         "message": "No open version found. Please sing or play it live.",
                         "canonical": classification,
-                        "notes": song_data.get("notes", ""),
+                        "notes": notes,
                     }
                 ),
                 200,
