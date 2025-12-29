@@ -60,7 +60,7 @@ class GeminiService:
 
     def generate_song_numbers(self, query: str) -> Dict:
         """
-        Use Gemini to return the full primary melody (verse + chorus) as scale-degree numbers (relative to tonic) and lyrics snippet if known.
+        Use Gemini to return the full primary melody (verse + chorus) as scale-degree numbers (relative to tonic) and lyrics, interleaved line by line.
         Expected JSON (do not wrap in code fences):
         {
           "found": true/false,
@@ -68,43 +68,48 @@ class GeminiService:
           "mode": "major",
           "time_signature": "4/4",
           "tempo_bpm": 90,
-          "measures": [["1","2","3","4"],["5","6","7","1"]],
-          "numbers": ["1","2",...],  // flattened
-          "lyrics": "snippet",
+          "lines": [
+            "Twinkle twinkle little star",
+            "1 1 5 5 6 6 5",
+            "How I wonder what you are",
+            "5 4 3 2 1"
+          ],
           "notes": "any notes"
         }
-        numbers should cover the main melody (verse and chorus, ~32-96 notes) in order, with repeats included.
         """
         if not self._enabled():
             notes = self.config_error or "Gemini disabled"
             return {
                 "found": False,
-                "numbers": [],
-                "lyrics": "",
+                "lines": [],
                 "notes": notes,
                 "error": "gemini_failed",
             }
         prompt = (
             "You are a professional music transcription assistant. Given a song title (and optional artist), "
-            "return the ACTUAL primary melody from the real song as scale-degree numbers (solfege) relative to the tonic.\n\n"
+            "return the ACTUAL primary melody from the real song as scale-degree numbers (solfege) relative to the tonic, interleaved with lyrics.\n\n"
             "IMPORTANT RULES:\n"
             "1. Return the REAL, RECOGNIZABLE melody from the actual song - NOT random notes\n"
             "2. Include verse AND chorus (aim for 32-96 notes total with repeats)\n"
-            "3. Organize into MEASURES based on time signature (typically 4 beats per measure in 4/4 time)\n"
+            "3. Alternate lines: first line is lyrics, second line is numbers, third line is lyrics, fourth line is numbers, etc.\n"
             "4. Use appropriate tempo for the song (e.g., 60-80 bpm for ballads, 100-140 for upbeat)\n"
             "5. Identify the correct key and mode (major/minor) for the song\n"
             "6. For rhythm: use single notes per beat OR break beats into smaller durations\n"
-            "7. Include a short lyrics snippet from the song if known\n\n"
+            "7. If lyrics are unknown, use '-' for the lyrics line.\n\n"
             "Response format (JSON only, no code fences):\n"
             "{\n"
             "  \"found\": true/false,\n"
-            "  \"key\": \"C\",  // tonic note (C, D, E, F, G, A, B, with # or b)\n"
-            "  \"mode\": \"major\",  // major or minor\n"
+            "  \"key\": \"C\",\n"
+            "  \"mode\": \"major\",\n"
             "  \"time_signature\": \"4/4\",\n"
-            "  \"tempo_bpm\": 100,  // realistic tempo for the song\n"
-            "  \"measures\": [[\"1\",\"2\",\"3\",\"4\"],[\"5\",\"6\",\"7\",\"1\"]],  // organized by measure\n"
-            "  \"numbers\": [\"1\",\"2\",\"3\",\"4\",\"5\",...],  // flattened from measures\n"
-            "  \"lyrics\": \"First line of song\",\n"
+            "  \"tempo_bpm\": 100,\n"
+            "  \"lines\": [\n"
+            "    \"lyrics line 1\",\n"
+            "    \"numbers line 1\",\n"
+            "    \"lyrics line 2\",\n"
+            "    \"numbers line 2\",\n"
+            "    ...\n"
+            "  ],\n"
             "  \"notes\": \"Additional context\"\n"
             "}\n\n"
             f"Song to transcribe: {query}\n\n"
@@ -131,25 +136,17 @@ class GeminiService:
                 logger.error("Gemini parse error: %s; raw=%r", exc, resp.text)
                 return {
                     "found": False,
-                    "numbers": [],
-                    "lyrics": "",
+                    "lines": [],
                     "notes": f"Gemini parse error: {exc}",
                     "error": "gemini_failed",
                 }
-            numbers = data.get("numbers") or []
-            measures = data.get("measures") or []
-            if not numbers and measures:
-                # flatten measures to numbers
-                numbers = [tok for bar in measures for tok in bar]
             return {
                 "found": bool(data.get("found")),
                 "key": data.get("key"),
                 "mode": data.get("mode"),
                 "time_signature": data.get("time_signature"),
                 "tempo_bpm": data.get("tempo_bpm"),
-                "measures": measures,
-                "numbers": numbers,
-                "lyrics": data.get("lyrics", ""),
+                "lines": data.get("lines", []),
                 "notes": data.get("notes", ""),
             }
         except Exception as exc:  # pragma: no cover
