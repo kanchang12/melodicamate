@@ -32,6 +32,54 @@ APP_TTS_CHAR_LIMIT = int(os.getenv("APP_TTS_CHAR_LIMIT", "400"))
 RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))
 
 
+def align_lyrics_with_numbers(lyrics_lines: List[str]) -> List[Dict[str, str]]:
+    """
+    Align lyric words to each number token based on alternating lyric/number lines
+    returned by Gemini. This is a best-effort map so coaching can mention words.
+    """
+    aligned: List[Dict[str, str]] = []
+    if not lyrics_lines:
+        return aligned
+    for i in range(0, len(lyrics_lines), 2):
+        lyric_line = str(lyrics_lines[i] or "").strip()
+        number_line = str(lyrics_lines[i + 1] if i + 1 < len(lyrics_lines) else "").strip()
+        words = [w for w in lyric_line.split() if w]
+        numbers = [n for n in number_line.replace(".", " ").split() if n]
+        for idx, num in enumerate(numbers):
+            word = words[idx] if idx < len(words) else (words[-1] if words else "")
+            aligned.append({"lyric": word, "number": num})
+    return aligned
+
+
+def describe_mistakes_with_lyrics(
+    wrong_notes: List[Dict],
+    expected: List[str],
+    played: List[str],
+    key_tonic: str,
+    mode: str,
+    lyric_alignment: List[Dict[str, str]],
+) -> List[str]:
+    details: List[str] = []
+    for wrong in wrong_notes:
+        idx = wrong["index"]
+        exp_num = expected[idx] if idx < len(expected) else wrong.get("expected")
+        got_num = played[idx] if idx < len(played) else wrong.get("got")
+        exp_note = pd_library.number_to_note_name(str(exp_num), key_tonic, mode) if exp_num else ""
+        got_note = pd_library.number_to_note_name(str(got_num), key_tonic, mode) if got_num else ""
+        lyric = lyric_alignment[idx].get("lyric", "") if idx < len(lyric_alignment) else ""
+        phrase = f"Note {idx + 1}"
+        if lyric:
+            phrase += f" ('{lyric}')"
+        if exp_num:
+            phrase += f" expected {exp_num} ({exp_note})"
+        if got_num:
+            phrase += f" but sang {got_num} ({got_note})"
+        else:
+            phrase += " but was missing"
+        details.append(phrase)
+    return details
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
 
@@ -136,7 +184,7 @@ def create_app() -> Flask:
         
         # 2. Get the target melody (the numbers you expect the user to hit)
         # We prioritize 'expected_numbers' passed from the Flutter Hive DB
-        expected_numbers = data.get("expected_numbers") 
+        expected_numbers = [str(x) for x in data.get("expected_numbers") or []]
 
         # Fallback logic if expected_numbers wasn't sent in the body
         if not expected_numbers:
@@ -151,6 +199,9 @@ def create_app() -> Flask:
         # This ensures if the song is in G, MIDI 67 maps to "1" instead of "5"
         played_numbers = map_notes_to_numbers(notes, key_tonic, mode, "sharps")
 
+        lyrics_lines = data.get("lyrics_lines") or []
+        lyric_alignment = align_lyrics_with_numbers(lyrics_lines)
+
         if not expected_numbers:
             accuracy = 0.0
             mistake_summary = {"issues": [], "summary": "Free play session - no target melody found."}
@@ -158,16 +209,31 @@ def create_app() -> Flask:
             # 4. Compare the sequences based on the ACTUAL song chosen
             accuracy, wrong_notes = compare_sequences(expected_numbers, played_numbers)
             mistake_summary = build_mistake_summary(wrong_notes)
+            mistake_summary["lyric_context"] = describe_mistakes_with_lyrics(
+                wrong_notes, expected_numbers, played_numbers, key_tonic, mode, lyric_alignment
+            )
+
+        expected_note_names = [
+            pd_library.number_to_note_name(str(n), key_tonic, mode) for n in expected_numbers
+        ]
+        played_note_names = [
+            pd_library.number_to_note_name(str(n), key_tonic, mode) for n in played_numbers
+        ]
 
         # 5. Get AI Coaching
         prompt_payload = {
             "exercise_id": exercise_id,
+            "title": data.get("canonical_title") or exercise_id,
             "key": key_tonic,
             "mode": mode,
             "accuracy_pct": accuracy,
             "mistakes": mistake_summary,
             "expected": expected_numbers,
             "played": played_numbers,
+            "expected_note_names": expected_note_names,
+            "played_note_names": played_note_names,
+            "lyrics_lines": lyrics_lines,
+            "lyric_context": mistake_summary.get("lyric_context", []),
         }
         coaching_text = gemini.generate_coaching_text(prompt_payload)
 

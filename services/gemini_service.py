@@ -32,18 +32,31 @@ class GeminiService:
         mistakes = payload.get("mistakes", {}).get("summary", "")
         expected = payload.get("expected") or []
         played = payload.get("played") or []
+        expected_notes = payload.get("expected_note_names") or []
+        played_notes = payload.get("played_note_names") or []
+        lyric_context = payload.get("lyric_context") or []
+        lyrics_lines = payload.get("lyrics_lines") or []
+        title = payload.get("title") or payload.get("exercise_id")
         base = (
-            f"{payload.get('exercise_id')} in key {payload.get('key')} {payload.get('mode')} "
+            f"{title} in key {payload.get('key')} {payload.get('mode')} "
             f"accuracy {accuracy:.1f}%. {mistakes}"
         )
         if not self._enabled():
             return self._fallback(base, accuracy)
         try:
-            prompt = (
-                "You are a concise music coach. "
-                "Reply in <=2 sentences, max 300 chars, actionable, specific to the notes. "
-                f"Summary: {base}. Expected: {' '.join(expected)}. Played: {' '.join(played)}."
-            )
+            prompt_parts = [
+                "You are a concise music coach. Keep replies to <=2 sentences, max 320 chars.",
+                "Reference the lyric word near each mistake when provided.",
+                f"Song: {title}. Key: {payload.get('key')} {payload.get('mode')}.",
+                f"Accuracy: {accuracy:.1f}%. Mistakes summary: {mistakes}.",
+                f"Expected numbers/notes: {' '.join(expected)} | {' '.join(expected_notes)}.",
+                f"Played numbers/notes: {' '.join(played)} | {' '.join(played_notes)}.",
+            ]
+            if lyric_context:
+                prompt_parts.append("Lyric positions: " + " | ".join(lyric_context[:4]) + ".")
+            if lyrics_lines:
+                prompt_parts.append("Reference lyric/number lines:\n" + "\n".join(lyrics_lines[:6]))
+            prompt = " ".join(prompt_parts)
             resp = self.model.generate_content(prompt)
             return resp.text.strip() if resp and resp.text else self._fallback(base, accuracy)
         except Exception as exc:  # pragma: no cover
@@ -77,13 +90,13 @@ class GeminiService:
             "3. Return ONLY valid JSON.\n\n"
             "Response format:\n"
             "{\n"
-            "  \"found\": true,\n"
-            "  \"key\": \"G\",\n"
-            "  \"mode\": \"major\",\n"
-            "  \"time_signature\": \"4/4\",\n"
-            "  \"tempo_bpm\": 90,\n"
-            "  \"lines\": [\"Lyric line\", \"1 1 5 5\", \"Lyric line\", \"6 6 5\"],\n"
-            "  \"notes\": \"context\"\n"
+            '  "found": true,\n'
+            '  "key": "G",\n'
+            '  "mode": "major",\n'
+            '  "time_signature": "4/4",\n'
+            '  "tempo_bpm": 90,\n'
+            '  "lines": ["Lyric line", "1 1 5 5", "Lyric line", "6 6 5"],\n'
+            '  "notes": "context"\n'
             "}\n\n"
             f"Song: {query}"
         )
@@ -95,10 +108,10 @@ class GeminiService:
 
             text = resp.text.strip().strip("`").replace("json", "", 1).strip()
             data = json.loads(text)
-            
+
             raw_lines = data.get("lines", [])
             numbers_only = []
-            
+
             # --- INTERLEAVING LOGIC FOR FLUTTER ---
             # We join all lines with newlines so it looks like a lead sheet
             # Line 1 (Lyric)
@@ -107,7 +120,7 @@ class GeminiService:
 
             # Extract just the numbers for the app's player/engine
             for i, line in enumerate(raw_lines):
-                if i % 2 != 0: # Odd indices (1, 3, 5) are the number lines
+                if i % 2 != 0:  # Odd indices (1, 3, 5) are the number lines
                     cleaned = line.replace(".", " ")
                     numbers_only.extend(cleaned.split())
 
@@ -118,8 +131,8 @@ class GeminiService:
                 "time_signature": data.get("time_signature"),
                 "tempo_bpm": data.get("tempo_bpm"),
                 "lines": raw_lines,
-                "numbers": numbers_only, # Used for the playback logic
-                "lyrics": interleaved_string, # Used for the UI display
+                "numbers": numbers_only,  # Used for the playback logic
+                "lyrics": interleaved_string,  # Used for the UI display
                 "notes": data.get("notes", ""),
             }
         except Exception as exc:
