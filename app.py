@@ -124,50 +124,42 @@ def create_app() -> Flask:
     @rate_limited
     def coach_exercise():
         if request.method == "GET":
-            return jsonify(
-                {
-                    "message": "POST exercise data for coaching.",
-                    "expected_fields": [
-                        "exercise_id",
-                        "key_tonic",
-                        "mode",
-                        "notation",
-                        "notes",
-                        "metrics",
-                    ],
-                }
-            )
-        data = request.get_json(force=True, silent=True) or {}
-        metrics = data.get("metrics", {}) or {}
-        if metrics.get("suspected_recording"):
-            return (
-                jsonify(
-                    {
-                        "refused": True,
-                        "reason": "suspected_recording",
-                        "message": "Sorry, this sounds like a recording. I can only analyze live singing or live playing.",
-                    }
-                ),
-                403,
-            )
+            return jsonify({"message": "POST exercise data for coaching."})
 
+        data = request.get_json(force=True, silent=True) or {}
+        
+        # 1. Get the song metadata from the Flutter request
         exercise_id = data.get("exercise_id")
         notes = data.get("notes", [])
-        key_tonic = data.get("key_tonic", "C")
-        mode = data.get("mode", "major")
-        notation = data.get("notation", "numbers")
+        key_tonic = data.get("key_tonic", "C")  # Now comes from your Hive song data
+        mode = data.get("mode", "major")        # Now comes from your Hive song data
+        
+        # 2. Get the target melody (the numbers you expect the user to hit)
+        # We prioritize 'expected_numbers' passed from the Flutter Hive DB
+        expected_numbers = data.get("expected_numbers") 
 
+        # Fallback logic if expected_numbers wasn't sent in the body
+        if not expected_numbers:
+            if exercise_id in EXPECTED_EXERCISES:
+                expected_numbers = expected_numbers_for_exercise(exercise_id, key_tonic, mode)
+            else:
+                # Check the local PD library as a second backup
+                song_match = pd_library.find_song(exercise_id, {})
+                expected_numbers = song_match["numbers"] if song_match else []
+
+        # 3. Map the user's LIVE notes to numbers using the SONG'S KEY
+        # This ensures if the song is in G, MIDI 67 maps to "1" instead of "5"
         played_numbers = map_notes_to_numbers(notes, key_tonic, mode, "sharps")
-        if exercise_id not in EXPECTED_EXERCISES:
-            # Allow free-play: no strict expectations; just echo back.
-            expected_numbers = []
+
+        if not expected_numbers:
             accuracy = 0.0
-            mistake_summary = {"issues": [], "summary": "Free play session."}
+            mistake_summary = {"issues": [], "summary": "Free play session - no target melody found."}
         else:
-            expected_numbers = expected_numbers_for_exercise(exercise_id, key_tonic, mode)
+            # 4. Compare the sequences based on the ACTUAL song chosen
             accuracy, wrong_notes = compare_sequences(expected_numbers, played_numbers)
             mistake_summary = build_mistake_summary(wrong_notes)
 
+        # 5. Get AI Coaching
         prompt_payload = {
             "exercise_id": exercise_id,
             "key": key_tonic,
@@ -179,22 +171,22 @@ def create_app() -> Flask:
         }
         coaching_text = gemini.generate_coaching_text(prompt_payload)
 
+        # 6. Generate TTS
         tts_audio = None
-        voice_enabled = (data.get("voice_enabled", True),)[0]
+        voice_enabled = data.get("voice_enabled", True)
         if voice_enabled and coaching_text:
             tts_audio = eleven.text_to_speech(coaching_text, data.get("voice_id"))
 
-        return jsonify(
-            {
-                "refused": False,
-                "coaching_text": coaching_text,
-                "expected_numbers": expected_numbers,
-                "played_numbers": played_numbers,
-                "mistakes_summary": mistake_summary,
-                "notation": notation,
-                "tts_audio_base64": tts_audio,
-            }
-        )
+        return jsonify({
+            "refused": False,
+            "coaching_text": coaching_text,
+            "expected_numbers": expected_numbers,
+            "played_numbers": played_numbers,
+            "mistakes_summary": mistake_summary,
+            "accuracy": accuracy,
+            "tts_audio_base64": tts_audio,
+        })
+
 
     @app.route("/api/song/request", methods=["POST", "GET"])
     @rate_limited
