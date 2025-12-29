@@ -250,6 +250,7 @@ def create_app() -> Flask:
         mode = song_data.get("mode") or mode
         tempo = song_data.get("tempo_bpm")
         measures = song_data.get("measures", [])
+        lines = song_data.get("lines", [])
         note_names = [pd_library.number_to_note_name(token, key, mode) for token in numbers]
         return jsonify(
             {
@@ -260,6 +261,7 @@ def create_app() -> Flask:
                 "mode": mode,
                 "numbers": numbers,
                 "measures": measures,
+                "lines": lines,
                 "tempo_bpm": tempo,
                 "note_names": note_names,
                 "lyrics": lyrics,
