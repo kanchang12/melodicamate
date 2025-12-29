@@ -60,33 +60,27 @@ class GeminiService:
 
     def generate_song_numbers(self, query: str) -> Dict:
         """
-        Use Gemini to return the full primary melody and lyrics.
-        Now correctly extracts lyrics from the interleaved lines.
+        Use Gemini to return interleaved lyrics and scale-degree numbers.
+        Returns a single formatted string in 'lyrics' for the Flutter UI.
         """
         if not self._enabled():
-            notes = self.config_error or "Gemini disabled"
-            return {
-                "found": False,
-                "lines": [],
-                "notes": notes,
-                "error": "gemini_failed",
-            }
-            
+            return {"found": False, "notes": "Gemini disabled", "error": "gemini_failed"}
+
         prompt = (
             "You are a professional music transcription assistant. Given a song title, "
-            "return the ACTUAL primary melody as scale-degree numbers relative to the tonic, interleaved with lyrics.\n\n"
-            "IMPORTANT RULES:\n"
-            "1. Return the REAL, RECOGNIZABLE melody.\n"
-            "2. Alternate lines: first line is lyrics, second line is numbers.\n"
-            "3. Use appropriate tempo and identify correct key/mode.\n\n"
-            "Response format (JSON only, no code fences):\n"
+            "return the melody as scale-degree numbers relative to the tonic, interleaved with lyrics.\n\n"
+            "RULES:\n"
+            "1. Alternate lines: Line 1=Lyrics, Line 2=Numbers, Line 3=Lyrics, Line 4=Numbers.\n"
+            "2. Numbers should be the actual melody notes.\n"
+            "3. Return ONLY valid JSON.\n\n"
+            "Response format:\n"
             "{\n"
             "  \"found\": true,\n"
-            "  \"key\": \"C\",\n"
+            "  \"key\": \"G\",\n"
             "  \"mode\": \"major\",\n"
             "  \"time_signature\": \"4/4\",\n"
-            "  \"tempo_bpm\": 100,\n"
-            "  \"lines\": [\"lyrics 1\", \"1 2 3\", \"lyrics 2\", \"3 2 1\"],\n"
+            "  \"tempo_bpm\": 90,\n"
+            "  \"lines\": [\"Lyric line\", \"1 1 5 5\", \"Lyric line\", \"6 6 5\"],\n"
             "  \"notes\": \"context\"\n"
             "}\n\n"
             f"Song: {query}"
@@ -95,35 +89,25 @@ class GeminiService:
         try:
             resp = self.model.generate_content(prompt)
             if not resp or not resp.text:
-                return {"found": False, "error": "gemini_failed"}
+                return {"found": False, "error": "empty_response"}
 
-            # Clean the JSON response
-            text = resp.text.strip().strip("`")
-            if text.startswith("json"):
-                text = text[text.find("{") :]
-            
+            text = resp.text.strip().strip("`").replace("json", "", 1).strip()
             data = json.loads(text)
-            lines = data.get("lines") or []
             
-            # --- FIX: EXTRACTION LOGIC ---
-            numbers = []
-            lyric_parts = []
+            raw_lines = data.get("lines", [])
+            numbers_only = []
             
-            for i, line in enumerate(lines):
-                if not isinstance(line, str):
-                    continue
-                
-                # Even indices (0, 2, 4...) are Lyrics
-                if i % 2 == 0:
-                    lyric_parts.append(line)
-                # Odd indices (1, 3, 5...) are Numbers
-                else:
+            # --- INTERLEAVING LOGIC FOR FLUTTER ---
+            # We join all lines with newlines so it looks like a lead sheet
+            # Line 1 (Lyric)
+            # Line 2 (Numbers)
+            interleaved_string = "\n".join(raw_lines)
+
+            # Extract just the numbers for the app's player/engine
+            for i, line in enumerate(raw_lines):
+                if i % 2 != 0: # Odd indices (1, 3, 5) are the number lines
                     cleaned = line.replace(".", " ")
-                    numbers.extend(cleaned.split())
-            
-            # Join the lyrics list into a single string with newlines for Flutter
-            full_lyrics = "\n".join(lyric_parts)
-            # -----------------------------
+                    numbers_only.extend(cleaned.split())
 
             return {
                 "found": bool(data.get("found")),
@@ -131,9 +115,9 @@ class GeminiService:
                 "mode": data.get("mode"),
                 "time_signature": data.get("time_signature"),
                 "tempo_bpm": data.get("tempo_bpm"),
-                "lines": lines,
-                "numbers": numbers,
-                "lyrics": full_lyrics,  # This now contains the actual text!
+                "lines": raw_lines,
+                "numbers": numbers_only, # Used for the playback logic
+                "lyrics": interleaved_string, # Used for the UI display
                 "notes": data.get("notes", ""),
             }
         except Exception as exc:
