@@ -30,6 +30,8 @@ class GeminiService:
     def generate_coaching_text(self, payload: Dict) -> str:
         accuracy = payload.get("accuracy_pct", 0)
         mistakes = payload.get("mistakes", {}).get("summary", "")
+        expected = payload.get("expected") or []
+        played = payload.get("played") or []
         base = (
             f"{payload.get('exercise_id')} in key {payload.get('key')} {payload.get('mode')} "
             f"accuracy {accuracy:.1f}%. {mistakes}"
@@ -39,8 +41,8 @@ class GeminiService:
         try:
             prompt = (
                 "You are a concise music coach. "
-                "Reply in <=2 sentences, max 300 chars, actionable. "
-                f"Summary: {base}"
+                "Reply in <=2 sentences, max 300 chars, actionable, specific to the notes. "
+                f"Summary: {base}. Expected: {' '.join(expected)}. Played: {' '.join(played)}."
             )
             resp = self.model.generate_content(prompt)
             return resp.text.strip() if resp and resp.text else self._fallback(base, accuracy)

@@ -174,6 +174,8 @@ def create_app() -> Flask:
             "mode": mode,
             "accuracy_pct": accuracy,
             "mistakes": mistake_summary,
+            "expected": expected_numbers,
+            "played": played_numbers,
         }
         coaching_text = gemini.generate_coaching_text(prompt_payload)
 
