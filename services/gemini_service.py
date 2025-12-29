@@ -60,9 +60,10 @@ class GeminiService:
 
     def generate_song_numbers(self, query: str) -> Dict:
         """
-        Use Gemini to return a melody as scale-degree numbers (relative to tonic) and lyrics if known.
+        Use Gemini to return the full primary melody (verse + chorus) as scale-degree numbers (relative to tonic) and lyrics snippet if known.
         Expected JSON:
         {"found":true/false,"numbers":["1","2",...],"lyrics":"...","notes":"..."}
+        numbers should cover the main melody (at least verse and chorus, ~32-96 notes) in order.
         """
         if not self._enabled():
             notes = self.config_error or "Gemini disabled"
@@ -74,9 +75,11 @@ class GeminiService:
                 "error": "gemini_failed",
             }
         prompt = (
-            "You are a music assistant. Given a song title (and optional artist), return its main melody "
-            "as scale-degree numbers in a likely key, plus one-line lyrics snippet if known. "
+            "You are a music assistant. Given a song title (and optional artist), return the FULL primary melody "
+            "(cover verse and chorus) as scale-degree numbers in a likely key. Include a short lyrics snippet if known. "
+            "If the melody repeats, include the repeats so the sequence is complete (aim for 32–96 notes). "
             "Respond with JSON only, fields: found (bool), numbers (array of strings), lyrics (string), notes (string). "
+            "Do not include code fences or prose. "
             f"Song: {query}"
         )
         try:
