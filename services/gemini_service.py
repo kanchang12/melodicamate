@@ -60,22 +60,8 @@ class GeminiService:
 
     def generate_song_numbers(self, query: str) -> Dict:
         """
-        Use Gemini to return the full primary melody (verse + chorus) as scale-degree numbers (relative to tonic) and lyrics, interleaved line by line.
-        Expected JSON (do not wrap in code fences):
-        {
-          "found": true/false,
-          "key": "G",
-          "mode": "major",
-          "time_signature": "4/4",
-          "tempo_bpm": 90,
-          "lines": [
-            "Twinkle twinkle little star",
-            "1 1 5 5 6 6 5",
-            "How I wonder what you are",
-            "5 4 3 2 1"
-          ],
-          "notes": "any notes"
-        }
+        Use Gemini to return the full primary melody and lyrics.
+        Now correctly extracts lyrics from the interleaved lines.
         """
         if not self._enabled():
             notes = self.config_error or "Gemini disabled"
@@ -85,79 +71,74 @@ class GeminiService:
                 "notes": notes,
                 "error": "gemini_failed",
             }
+            
         prompt = (
-            "You are a professional music transcription assistant. Given a song title (and optional artist), "
-            "return the ACTUAL primary melody from the real song as scale-degree numbers (solfege) relative to the tonic, interleaved with lyrics.\n\n"
+            "You are a professional music transcription assistant. Given a song title, "
+            "return the ACTUAL primary melody as scale-degree numbers relative to the tonic, interleaved with lyrics.\n\n"
             "IMPORTANT RULES:\n"
-            "1. Return the REAL, RECOGNIZABLE melody from the actual song - NOT random notes\n"
-            "2. Include verse AND chorus (aim for 32-96 notes total with repeats)\n"
-            "3. Alternate lines: first line is lyrics, second line is numbers, third line is lyrics, fourth line is numbers, etc.\n"
-            "4. Use appropriate tempo for the song (e.g., 60-80 bpm for ballads, 100-140 for upbeat)\n"
-            "5. Identify the correct key and mode (major/minor) for the song\n"
-            "6. For rhythm: use single notes per beat OR break beats into smaller durations\n"
-            "7. If lyrics are unknown, use '-' for the lyrics line.\n\n"
+            "1. Return the REAL, RECOGNIZABLE melody.\n"
+            "2. Alternate lines: first line is lyrics, second line is numbers.\n"
+            "3. Use appropriate tempo and identify correct key/mode.\n\n"
             "Response format (JSON only, no code fences):\n"
             "{\n"
-            "  \"found\": true/false,\n"
+            "  \"found\": true,\n"
             "  \"key\": \"C\",\n"
             "  \"mode\": \"major\",\n"
             "  \"time_signature\": \"4/4\",\n"
             "  \"tempo_bpm\": 100,\n"
-            "  \"lines\": [\n"
-            "    \"lyrics line 1\",\n"
-            "    \"numbers line 1\",\n"
-            "    \"lyrics line 2\",\n"
-            "    \"numbers line 2\",\n"
-            "    ...\n"
-            "  ],\n"
-            "  \"notes\": \"Additional context\"\n"
+            "  \"lines\": [\"lyrics 1\", \"1 2 3\", \"lyrics 2\", \"3 2 1\"],\n"
+            "  \"notes\": \"context\"\n"
             "}\n\n"
-            f"Song to transcribe: {query}\n\n"
-            "Remember: Return the ACTUAL melody that people would recognize, not random sequences!"
+            f"Song: {query}"
         )
+
         try:
             resp = self.model.generate_content(prompt)
             if not resp or not resp.text:
-                logger.error("Gemini song lookup returned empty response")
-                return {
-                    "found": False,
-                    "numbers": [],
-                    "lyrics": "",
-                    "notes": "Gemini empty response",
-                    "error": "gemini_failed",
-                }
-            logger.info("Gemini raw song response: %r", resp.text)
+                return {"found": False, "error": "gemini_failed"}
+
+            # Clean the JSON response
             text = resp.text.strip().strip("`")
             if text.startswith("json"):
                 text = text[text.find("{") :]
-            try:
-                data = json.loads(text)
-            except Exception as exc:
-                logger.error("Gemini parse error: %s; raw=%r", exc, resp.text)
-                return {
-                    "found": False,
-                    "lines": [],
-                    "notes": f"Gemini parse error: {exc}",
-                    "error": "gemini_failed",
-                }
+            
+            data = json.loads(text)
+            lines = data.get("lines") or []
+            
+            # --- FIX: EXTRACTION LOGIC ---
+            numbers = []
+            lyric_parts = []
+            
+            for i, line in enumerate(lines):
+                if not isinstance(line, str):
+                    continue
+                
+                # Even indices (0, 2, 4...) are Lyrics
+                if i % 2 == 0:
+                    lyric_parts.append(line)
+                # Odd indices (1, 3, 5...) are Numbers
+                else:
+                    cleaned = line.replace(".", " ")
+                    numbers.extend(cleaned.split())
+            
+            # Join the lyrics list into a single string with newlines for Flutter
+            full_lyrics = "\n".join(lyric_parts)
+            # -----------------------------
+
             return {
                 "found": bool(data.get("found")),
                 "key": data.get("key"),
                 "mode": data.get("mode"),
                 "time_signature": data.get("time_signature"),
                 "tempo_bpm": data.get("tempo_bpm"),
-                "lines": data.get("lines", []),
+                "lines": lines,
+                "numbers": numbers,
+                "lyrics": full_lyrics,  # This now contains the actual text!
                 "notes": data.get("notes", ""),
             }
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.error("Gemini song lookup failed: %s", exc)
-            return {
-                "found": False,
-                "numbers": [],
-                "lyrics": "",
-                "notes": f"Gemini error: {exc}",
-                "error": "gemini_failed",
-            }
+            return {"found": False, "error": str(exc)}
 
     def _fallback(self, base: str, accuracy: float) -> str:
         if accuracy >= 90:
