@@ -1,0 +1,88 @@
+Privacy Policy — MelodicaMate
+
+Effective date: 30 Dec 2025
+
+MelodicaMate (“the app”) is an early-stage learning tool that helps users practice music with real-time feedback. We take privacy seriously and aim to collect as little data as possible.
+
+1) What data the app uses
+Microphone (Audio Input)
+
+MelodicaMate requires microphone access to analyze live playing or singing.
+
+Audio is used to detect pitch/notes and provide feedback.
+
+We do not store raw microphone recordings by default.
+
+2) What data we store
+Local Device Storage
+
+The app may store the following only on your device:
+
+selected settings (e.g., key, notation mode)
+
+practice session summaries (e.g., detected notes)
+
+daily usage timer (e.g., minutes used today)
+
+This data is stored locally using on-device storage and is not shared unless you choose to share it.
+
+3) What data may be sent to our server
+
+When you request AI coaching or voice feedback, the app may send non-audio session information to a backend service, such as:
+
+detected note events (e.g., MIDI note numbers, timestamps, confidence)
+
+selected exercise, key, and mode
+
+basic performance metrics (e.g., accuracy estimate)
+
+a flag indicating suspected recorded audio (to enforce app rules)
+
+Important: We do not need raw audio to provide coaching. The app is designed to send only small structured data.
+
+4) Third-party services
+
+MelodicaMate may use third-party APIs to generate coaching text and voice responses:
+
+Google Gemini (Google Cloud) — used to generate short coaching feedback based on your performance metrics
+
+ElevenLabs — used to convert coaching text into spoken audio
+
+These services may process the data sent to them according to their own privacy policies. We only send the minimum data needed to provide the requested feature.
+
+5) Recorded music restriction
+
+To respect copyright and reduce misuse, MelodicaMate is designed for live input (singing, humming, or playing). If input appears to be a recorded song, the app may refuse to analyze it.
+
+6) Analytics and tracking
+
+MelodicaMate does not use advertising trackers.
+If analytics are added in the future, this policy will be updated and users will be informed.
+
+7) Data retention
+
+Practice data stored locally stays on your device until you uninstall the app or clear its storage.
+
+Server requests are processed to deliver responses and are not intended for long-term storage. (This may evolve as the product matures; any changes will be reflected here.)
+
+8) Children’s privacy
+
+MelodicaMate is not designed specifically for children under 13. If you are a parent or guardian and believe a child has provided personal data, please contact us and we will address it.
+
+9) Your choices
+
+You can:
+
+deny microphone permission (the app will not be able to listen)
+
+uninstall the app to remove locally stored data
+
+disable voice features if available in settings
+
+10) Changes to this policy
+
+We may update this Privacy Policy as the product evolves. The effective date will be updated accordingly.
+
+11) Contact
+
+For questions or requests, contact: kanchan@ikanchan.com
