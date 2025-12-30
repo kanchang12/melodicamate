@@ -181,7 +181,19 @@ def create_app() -> Flask:
         notes = data.get("notes", [])
         key_tonic = data.get("key_tonic", "C")
         mode = data.get("mode", "major")
-        canonical_title = data.get("canonical_title") or exercise_id or "this piece"
+        
+        # PRIORITY ORDER for getting the song title:
+        # 1. canonical_title (from song request API)
+        # 2. title (direct from Flutter)
+        # 3. exercise_id (fallback to ID)
+        # 4. "this piece" (last resort)
+        canonical_title = (
+            data.get("canonical_title") or 
+            data.get("title") or 
+            data.get("song_title") or
+            exercise_id or 
+            "this piece"
+        )
         
         # 2. Get the target melody
         expected_numbers = [str(x) for x in data.get("expected_numbers") or []]
@@ -219,7 +231,7 @@ def create_app() -> Flask:
         # 5. Create a simplified, musical prompt payload
         # Remove all technical details - just focus on song and performance
         prompt_payload = {
-            "title": canonical_title,
+            "title": canonical_title,  # Use the proper title here!
             "accuracy_pct": accuracy,
             "lyric_context": lyric_context,  # Just the words, no note names
             "lyrics_lines": lyrics_lines,  # For additional context if needed
@@ -238,6 +250,7 @@ def create_app() -> Flask:
         return jsonify({
             "refused": False,
             "coaching_text": coaching_text,
+            "song_title": canonical_title,  # Echo back the title for confirmation
             "expected_numbers": expected_numbers,
             "played_numbers": played_numbers,
             "mistakes_summary": mistake_summary,
@@ -245,24 +258,33 @@ def create_app() -> Flask:
             "tts_audio_base64": tts_audio,
         })
 
-
     @app.route("/api/song/request", methods=["POST", "GET"])
     @rate_limited
     def song_request():
         if request.method == "GET":
             return jsonify({"message": "POST a song query to search public-domain library."})
+        
         data = request.get_json(force=True, silent=True) or {}
         query = (data.get("query") or "").strip()
         desired_key = data.get("desired_key", "C")
         mode = data.get("mode", "major")
+        
         if not query:
             return (
                 jsonify({"error": "invalid_input", "message": "query is required"}),
                 400,
             )
 
+        # Get classification info (not used for gating, just metadata)
         classification = gemini.classify_song_request(query, data.get("composer_or_artist"))
+        
+        # Use the user's original query as the canonical title
+        # Only use classification title if user query is very short/unclear
+        canonical_title = query if len(query) > 2 else classification.get("canonical_title", query)
+        
+        # Get song data from Gemini
         song_data = gemini.generate_song_numbers(query)
+        
         if not song_data.get("found"):
             error = song_data.get("error")
             notes = song_data.get("notes", "")
@@ -275,7 +297,7 @@ def create_app() -> Flask:
                             "refused": False,
                             "error": error,
                             "message": "Gemini call failed or returned invalid data.",
-                            "canonical": classification,
+                            "canonical_title": canonical_title,  # Return the user's query
                             "notes": notes,
                         }
                     ),
@@ -287,7 +309,7 @@ def create_app() -> Flask:
                         "found": False,
                         "refused": False,
                         "message": "No open version found. Please sing or play it live.",
-                        "canonical": classification,
+                        "canonical_title": canonical_title,  # Return the user's query
                         "notes": notes,
                     }
                 ),
@@ -301,12 +323,20 @@ def create_app() -> Flask:
         tempo = song_data.get("tempo_bpm")
         measures = song_data.get("measures", [])
         lines = song_data.get("lines", [])
+        
         note_names = [pd_library.number_to_note_name(token, key, mode) for token in numbers]
+        
+        # Create a proper song ID from the title
+        # This helps Flutter store it with a recognizable name
+        song_id = canonical_title.lower().replace(" ", "_").replace("'", "")
+        
         return jsonify(
             {
                 "found": True,
                 "refused": False,
-                "canonical": classification,
+                "song_id": song_id,  # e.g., "happy_birthday", "twinkle_twinkle"
+                "canonical_title": canonical_title,  # User's original input
+                "title": canonical_title,  # Alias for convenience
                 "key": key,
                 "mode": mode,
                 "numbers": numbers,
@@ -316,6 +346,7 @@ def create_app() -> Flask:
                 "note_names": note_names,
                 "lyrics": lyrics,
                 "source": "gemini",
+                "confidence": song_data.get("confidence", "unknown"),
                 "notes": song_data.get("notes", ""),
             }
         )
