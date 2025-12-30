@@ -179,24 +179,21 @@ def create_app() -> Flask:
         # 1. Get the song metadata from the Flutter request
         exercise_id = data.get("exercise_id")
         notes = data.get("notes", [])
-        key_tonic = data.get("key_tonic", "C")  # Now comes from your Hive song data
-        mode = data.get("mode", "major")        # Now comes from your Hive song data
+        key_tonic = data.get("key_tonic", "C")
+        mode = data.get("mode", "major")
+        canonical_title = data.get("canonical_title") or exercise_id or "this piece"
         
-        # 2. Get the target melody (the numbers you expect the user to hit)
-        # We prioritize 'expected_numbers' passed from the Flutter Hive DB
+        # 2. Get the target melody
         expected_numbers = [str(x) for x in data.get("expected_numbers") or []]
 
-        # Fallback logic if expected_numbers wasn't sent in the body
         if not expected_numbers:
             if exercise_id in EXPECTED_EXERCISES:
                 expected_numbers = expected_numbers_for_exercise(exercise_id, key_tonic, mode)
             else:
-                # Check the local PD library as a second backup
                 song_match = pd_library.find_song(exercise_id, {})
                 expected_numbers = song_match["numbers"] if song_match else []
 
-        # 3. Map the user's LIVE notes to numbers using the SONG'S KEY
-        # This ensures if the song is in G, MIDI 67 maps to "1" instead of "5"
+        # 3. Map the user's LIVE notes to numbers
         played_numbers = map_notes_to_numbers(notes, key_tonic, mode, "sharps")
 
         lyrics_lines = data.get("lyrics_lines") or []
@@ -205,36 +202,29 @@ def create_app() -> Flask:
         if not expected_numbers:
             accuracy = 0.0
             mistake_summary = {"issues": [], "summary": "Free play session - no target melody found."}
+            lyric_context = []
         else:
-            # 4. Compare the sequences based on the ACTUAL song chosen
+            # 4. Compare the sequences
             accuracy, wrong_notes = compare_sequences(expected_numbers, played_numbers)
             mistake_summary = build_mistake_summary(wrong_notes)
-            mistake_summary["lyric_context"] = describe_mistakes_with_lyrics(
-                wrong_notes, expected_numbers, played_numbers, key_tonic, mode, lyric_alignment
-            )
+            
+            # Create simple, lyric-focused context (not technical)
+            lyric_context = []
+            for wrong in wrong_notes[:3]:  # Only first 3 mistakes
+                idx = wrong["index"]
+                lyric = lyric_alignment[idx].get("lyric", "") if idx < len(lyric_alignment) else ""
+                if lyric:
+                    lyric_context.append(lyric)
 
-        expected_note_names = [
-            pd_library.number_to_note_name(str(n), key_tonic, mode) for n in expected_numbers
-        ]
-        played_note_names = [
-            pd_library.number_to_note_name(str(n), key_tonic, mode) for n in played_numbers
-        ]
-
-        # 5. Get AI Coaching
+        # 5. Create a simplified, musical prompt payload
+        # Remove all technical details - just focus on song and performance
         prompt_payload = {
-            "exercise_id": exercise_id,
-            "title": data.get("canonical_title") or exercise_id,
-            "key": key_tonic,
-            "mode": mode,
+            "title": canonical_title,
             "accuracy_pct": accuracy,
-            "mistakes": mistake_summary,
-            "expected": expected_numbers,
-            "played": played_numbers,
-            "expected_note_names": expected_note_names,
-            "played_note_names": played_note_names,
-            "lyrics_lines": lyrics_lines,
-            "lyric_context": mistake_summary.get("lyric_context", []),
+            "lyric_context": lyric_context,  # Just the words, no note names
+            "lyrics_lines": lyrics_lines,  # For additional context if needed
         }
+        
         coaching_text = gemini.generate_coaching_text(prompt_payload)
 
         # 6. Generate TTS
@@ -243,6 +233,8 @@ def create_app() -> Flask:
         if voice_enabled and coaching_text:
             tts_audio = eleven.text_to_speech(coaching_text, data.get("voice_id"))
 
+        # Return both human coaching and technical details
+        # (technical details for UI display, not for voice)
         return jsonify({
             "refused": False,
             "coaching_text": coaching_text,
