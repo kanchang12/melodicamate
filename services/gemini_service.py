@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Dict
+from typing import Dict, List  # Added List to imports
 
 import google.generativeai as genai
 
@@ -27,30 +27,15 @@ class GeminiService:
     def _enabled(self) -> bool:
         return bool(self.api_key and self.model and not self.config_error)
 
-
-
-    def classify_song_request(self, query: str, composer: str = "") -> Dict:
-        # Allow all; rely on Gemini to return numbers/lyrics. No PD gate here.
-        return {
-            "likely_public_domain": True,
-            "canonical_title": query.title(),
-            "composer": composer or "",
-            "search_terms": [query],
-            "notes": "Classification delegated to Gemini.",
-        }
-
-
     def generate_coaching_text(self, payload: Dict) -> str:
         """
         Generate warm, human coaching that focuses on musicality and song context,
         not technical jargon.
         """
         accuracy = payload.get("accuracy_pct", 0)
-        mistakes = payload.get("mistakes", {})
-        expected = payload.get("expected") or []
-        played = payload.get("played") or []
         lyric_context = payload.get("lyric_context") or []
-        title = payload.get("title") or payload.get("exercise_id", "this song")
+        lyrics_lines = payload.get("lyrics_lines") or []
+        title = payload.get("title") or "this song"
         
         if not self._enabled():
             return self._fallback_human_coaching(title, accuracy, lyric_context)
@@ -76,15 +61,10 @@ class GeminiService:
             
             # Add context about where mistakes happened (lyrics-based)
             if lyric_context and accuracy < 95:
-                # Just mention the first 2 problem spots
                 problem_spots = []
-                for ctx in lyric_context[:2]:
-                    # Extract just the lyric word, not the technical stuff
-                    if "'" in ctx:
-                        # Extract text between quotes
-                        lyric = ctx.split("'")[1] if "'" in ctx else ""
-                        if lyric:
-                            problem_spots.append(f"'{lyric}'")
+                for word in lyric_context[:2]:
+                    if word:
+                        problem_spots.append(f"'{word}'")
                 
                 if problem_spots:
                     prompt_parts.append(f"Trouble spots near: {', '.join(problem_spots)}")
@@ -136,11 +116,9 @@ class GeminiService:
         """
         # Extract just the lyric words from context (if any)
         problem_words = []
-        for ctx in (lyric_context or [])[:2]:
-            if "'" in ctx:
-                word = ctx.split("'")[1] if len(ctx.split("'")) > 1 else ""
-                if word:
-                    problem_words.append(f"'{word}'")
+        for word in (lyric_context or [])[:2]:
+            if word:
+                problem_words.append(f"'{word}'")
         
         spot_mention = f" especially around {' and '.join(problem_words)}" if problem_words else ""
         
@@ -157,6 +135,16 @@ class GeminiService:
             return f"Keep working on {title}! Try listening to it a few times first, then sing along. Focus on matching the melody shape."
         
         return f"Let's take {title} slower. Hum the melody first to learn the pattern, then add your voice. You'll get there!"
+
+    def classify_song_request(self, query: str, composer: str = "") -> Dict:
+        # Allow all; rely on Gemini to return numbers/lyrics. No PD gate here.
+        return {
+            "likely_public_domain": True,
+            "canonical_title": query.title(),
+            "composer": composer or "",
+            "search_terms": [query],
+            "notes": "Classification delegated to Gemini.",
+        }
 
     def generate_song_numbers(self, query: str) -> Dict:
         """
@@ -244,7 +232,7 @@ class GeminiService:
                 if i % 2 != 0:  # Odd indices are number lines
                     # Clean up notation: remove dots and dashes, keep only numbers
                     cleaned = line.replace(".", " ").replace("-", " ")
-                    numbers_only.extend([n for n in cleaned.split() if n and n[0].isdigit() or n[0] in ['b', '#']])
+                    numbers_only.extend([n for n in cleaned.split() if n and (n[0].isdigit() or n[0] in ['b', '#'])])
 
             result = {
                 "found": bool(data.get("found")),
@@ -273,10 +261,3 @@ class GeminiService:
         except Exception as exc:
             logger.error("Gemini song lookup failed: %s", exc)
             return {"found": False, "error": str(exc)}
-
-    def _fallback(self, base: str, accuracy: float) -> str:
-        if accuracy >= 90:
-            return "Nice work! You're very close—keep the airflow steady and repeat once more for consistency."
-        if accuracy >= 70:
-            return "Good effort. Watch the intonation on the missed notes and keep the tempo steady."
-        return "Let's try again slower. Focus on matching each pitch; breathe evenly and aim for clean note starts."
