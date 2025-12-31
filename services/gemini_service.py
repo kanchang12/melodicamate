@@ -1,7 +1,8 @@
 import json
 import logging
 import os
-from typing import Dict, List  # Added List to imports
+import base64
+from typing import Dict, List
 
 import google.generativeai as genai
 
@@ -11,13 +12,13 @@ logger = logging.getLogger("melodicamate.gemini")
 class GeminiService:
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
         self.config_error: str = ""
         if self.api_key:
             try:
                 genai.configure(api_key=self.api_key)
                 self.model = genai.GenerativeModel(self.model_name)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
                 self.model = None
                 self.config_error = f"Gemini init failed: {exc}"
                 logger.error(self.config_error)
@@ -41,7 +42,6 @@ class GeminiService:
             return self._fallback_human_coaching(title, accuracy, lyric_context)
         
         try:
-            # Build a context-rich, musical prompt
             prompt_parts = [
                 "You are a warm, encouraging music teacher having a conversation with a student.",
                 "Give friendly, practical advice focused on the musical experience.",
@@ -59,7 +59,6 @@ class GeminiService:
                 f"Performance accuracy: {accuracy:.0f}%",
             ]
             
-            # Add context about where mistakes happened (lyrics-based)
             if lyric_context and accuracy < 95:
                 problem_spots = []
                 for word in lyric_context[:2]:
@@ -69,7 +68,6 @@ class GeminiService:
                 if problem_spots:
                     prompt_parts.append(f"Trouble spots near: {', '.join(problem_spots)}")
             
-            # Add performance quality context
             if accuracy >= 90:
                 prompt_parts.append("Performance was very strong, just minor polish needed.")
             elif accuracy >= 70:
@@ -79,20 +77,8 @@ class GeminiService:
             else:
                 prompt_parts.append("Struggling with pitch accuracy - may need to slow down.")
             
-            prompt_parts.extend([
-                "",
-                "EXAMPLE GOOD RESPONSES:",
-                "- 'Nice work on Twinkle Twinkle! The opening was spot-on. Try smoothing out that upward jump in the second line - imagine reaching gently upward instead of jumping.'",
-                "- 'Happy Birthday sounded great until the chorus. That high part on 'to you' needs more air support - take a bigger breath before it.'",
-                "- 'You've got the rhythm of Amazing Grace down! Focus on the melody when you sing 'how sweet' - it climbs up then comes back down. Hum it a few times to feel the shape.'",
-                "",
-                "EXAMPLE BAD RESPONSES (never do this):",
-                "- 'You played B flat instead of B natural at measure 3'",
-                "- 'Scale degree 5 was incorrect, should be degree 6'",
-                "- 'MIDI note 63 was detected instead of 65'",
-                "",
-                "Now give warm, practical feedback about this performance:",
-            ])
+            prompt_parts.append("")
+            prompt_parts.append("Now give warm, practical feedback about this performance:")
             
             prompt = "\n".join(prompt_parts)
             
@@ -100,7 +86,6 @@ class GeminiService:
             
             if resp and resp.text:
                 coaching = resp.text.strip()
-                # Remove any quotes if the model wrapped the response
                 coaching = coaching.strip('"').strip("'")
                 return coaching
             
@@ -114,7 +99,6 @@ class GeminiService:
         """
         Provide warm, human fallback coaching when AI is unavailable.
         """
-        # Extract just the lyric words from context (if any)
         problem_words = []
         for word in (lyric_context or [])[:2]:
             if word:
@@ -136,6 +120,127 @@ class GeminiService:
         
         return f"Let's take {title} slower. Hum the melody first to learn the pattern, then add your voice. You'll get there!"
 
+    def analyze_user_recording(self, audio_data: bytes, song_title: str = "Unknown Song") -> Dict:
+        """
+        Analyze a user's recorded audio (their own singing/humming) and extract the melody.
+        
+        Args:
+            audio_data: Raw audio bytes (WAV, MP3, etc.)
+            song_title: Optional title for context
+            
+        Returns:
+            Dict with melody as scale-degree numbers
+        """
+        if not self._enabled():
+            return {"found": False, "notes": "Gemini disabled", "error": "gemini_failed"}
+
+        try:
+            # Convert audio to base64 for Gemini
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            
+            prompt = f"""Analyze this audio recording and extract the melody as scale-degree numbers.
+
+TASK:
+The user has recorded themselves singing, humming, or whistling a melody.
+Your job is to:
+1. Listen to the audio
+2. Identify the pitches being sung
+3. Determine the key and mode
+4. Convert the melody to scale-degree notation (1-7)
+
+SCALE DEGREE NOTATION:
+- 1 = tonic (root note)
+- 2 = supertonic
+- 3 = mediant
+- 4 = subdominant
+- 5 = dominant
+- 6 = submediant
+- 7 = leading tone
+- Use 'b' for flats (b3, b7)
+- Use '#' for sharps (#4, #5)
+
+RESPONSE FORMAT (JSON):
+{{
+  "found": true,
+  "confidence": "high|medium|low",
+  "key": "C",
+  "mode": "major",
+  "notes": [1, 1, 5, 5, 6, 6, 5],
+  "tempo_bpm": 120,
+  "notes_text": "Analysis notes about the recording quality and any issues"
+}}
+
+Song context: {song_title}
+
+IMPORTANT:
+- Be honest about confidence - if the audio is unclear, set confidence to "low"
+- Extract ONLY the sung melody, ignore background noise
+- If you can't detect clear pitches, explain why in notes_text"""
+
+            # Create the audio part for Gemini
+            audio_part = {
+                "mime_type": "audio/wav",  # Adjust based on actual format
+                "data": audio_base64
+            }
+            
+            response = self.model.generate_content([prompt, audio_part])
+            
+            if not response or not response.text:
+                return {"found": False, "error": "empty_response"}
+
+            text = response.text.strip()
+            
+            # Remove markdown code fences if present
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            text = text.strip()
+            
+            # Print for debugging
+            logger.info("=" * 80)
+            logger.info(f"GEMINI AUDIO ANALYSIS FOR '{song_title}':")
+            logger.info(text)
+            logger.info("=" * 80)
+            print("\n" + "=" * 80)
+            print(f"GEMINI AUDIO ANALYSIS FOR '{song_title}':")
+            print(text)
+            print("=" * 80 + "\n")
+            
+            data = json.loads(text)
+            
+            # Validate response
+            if not data.get("found"):
+                return {
+                    "found": False,
+                    "error": "no_melody_detected",
+                    "notes": data.get("notes_text", "Could not detect melody in recording")
+                }
+            
+            notes = data.get("notes", [])
+            if len(notes) < 3:
+                logger.warning(f"Very short melody detected: {len(notes)} notes")
+                data["notes_text"] = (data.get("notes_text", "") + 
+                                     " [Warning: Very short melody detected]")
+            
+            return {
+                "found": True,
+                "confidence": data.get("confidence", "unknown"),
+                "key": data.get("key", "C"),
+                "mode": data.get("mode", "major"),
+                "numbers": [str(n) for n in notes],  # Convert to strings for consistency
+                "tempo_bpm": data.get("tempo_bpm", 100),
+                "notes": data.get("notes_text", ""),
+                "source": "user_recording"
+            }
+            
+        except json.JSONDecodeError as exc:
+            logger.error(f"Gemini returned invalid JSON: {exc}")
+            return {"found": False, "error": "invalid_json", "notes": str(exc)}
+        except Exception as exc:
+            logger.error(f"Audio analysis failed: {exc}")
+            return {"found": False, "error": str(exc)}
+
     def classify_song_request(self, query: str, composer: str = "") -> Dict:
         # Allow all; rely on Gemini to return numbers/lyrics. No PD gate here.
         return {
@@ -148,116 +253,21 @@ class GeminiService:
 
     def generate_song_numbers(self, query: str) -> Dict:
         """
-        Use Gemini to return interleaved lyrics and scale-degree numbers.
-        Returns a single formatted string in 'lyrics' for the Flutter UI.
+        DEPRECATED: This method tries to recall songs from memory, which doesn't work well.
+        Use analyze_user_recording() instead for user-provided audio.
+        
+        Kept for backward compatibility but will return low confidence.
         """
         if not self._enabled():
             return {"found": False, "notes": "Gemini disabled", "error": "gemini_failed"}
 
-        prompt = (
-            "You are a professional music transcription assistant with perfect pitch recall. "
-            "Given a song title, return the EXACT melody as scale-degree numbers relative to the tonic.\n\n"
-            "CRITICAL REQUIREMENTS:\n"
-            "1. Return the ACTUAL melody notes, not an approximation. Each number must match the real song.\n"
-            "2. Scale degrees: 1=tonic, 2=supertonic, 3=mediant, 4=subdominant, 5=dominant, 6=submediant, 7=leading tone\n"
-            "3. Use 'b' for flats (e.g., b3, b7) and '#' for sharps (e.g., #4) when needed\n"
-            "4. Alternate lines: Line 1=Lyrics, Line 2=Numbers (one number per syllable), Line 3=Lyrics, Line 4=Numbers\n"
-            "5. Match rhythm: Use dots (...) for held notes, dashes (---) for rests\n"
-            "6. One number per sung syllable - align numbers with lyric syllables precisely\n"
-            "7. Double-check your melody against the actual song before responding\n\n"
-            "EXAMPLES:\n"
-            "Twinkle Twinkle Little Star (C major):\n"
-            "Lyrics: 'Twin-kle twin-kle lit-tle star'\n"
-            "Numbers: '1 1 5 5 6 6 5...'\n\n"
-            "Happy Birthday (C major):\n"
-            "Lyrics: 'Hap-py birth-day to you'\n"
-            "Numbers: '5 5 6 5 1 7...'\n\n"
-            "Response format (valid JSON only):\n"
-            "{\n"
-            '  "found": true,\n'
-            '  "confidence": "high|medium|low",\n'
-            '  "key": "C",\n'
-            '  "mode": "major",\n'
-            '  "time_signature": "4/4",\n'
-            '  "tempo_bpm": 90,\n'
-            '  "lines": [\n'
-            '    "Lyric line with syllables",\n'
-            '    "1 1 5 5 6 6 5",\n'
-            '    "Next lyric line",\n'
-            '    "1 2 3 4 5"\n'
-            '  ],\n'
-            '  "notes": "Context about transcription accuracy and any uncertainties"\n'
-            "}\n\n"
-            "IMPORTANT: If you're not confident about the exact melody, set confidence to 'low' "
-            "and explain in 'notes' what you're uncertain about. Do not guess.\n\n"
-            f"Transcribe this song accurately: {query}\n\n"
-            "Think step-by-step:\n"
-            "1. Recall the exact melody from memory\n"
-            "2. Identify the key and starting pitch\n"
-            "3. Convert each note to its scale degree\n"
-            "4. Verify it matches the actual song\n"
-            "5. Return the JSON response"
-        )
-
-        try:
-            resp = self.model.generate_content(prompt)
-            if not resp or not resp.text:
-                return {"found": False, "error": "empty_response"}
-
-            text = resp.text.strip()
-            # Remove markdown code fences if present
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-            text = text.strip()
-            
-            data = json.loads(text)
-
-            # Check confidence level
-            confidence = data.get("confidence", "unknown")
-            if confidence == "low":
-                logger.warning(
-                    f"Low confidence transcription for '{query}': {data.get('notes', '')}"
-                )
-
-            raw_lines = data.get("lines", [])
-            numbers_only = []
-
-            # Interleave lyrics and numbers for display
-            interleaved_string = "\n".join(raw_lines)
-
-            # Extract just the numbers for playback
-            for i, line in enumerate(raw_lines):
-                if i % 2 != 0:  # Odd indices are number lines
-                    # Clean up notation: remove dots and dashes, keep only numbers
-                    cleaned = line.replace(".", " ").replace("-", " ")
-                    numbers_only.extend([n for n in cleaned.split() if n and (n[0].isdigit() or n[0] in ['b', '#'])])
-
-            result = {
-                "found": bool(data.get("found")),
-                "confidence": confidence,
-                "key": data.get("key"),
-                "mode": data.get("mode"),
-                "time_signature": data.get("time_signature"),
-                "tempo_bpm": data.get("tempo_bpm"),
-                "lines": raw_lines,
-                "numbers": numbers_only,
-                "lyrics": interleaved_string,
-                "notes": data.get("notes", ""),
-            }
-            
-            # Log warning if transcription seems suspicious
-            if len(numbers_only) < 8:
-                logger.warning(f"Suspiciously short melody for '{query}': {len(numbers_only)} notes")
-                result["notes"] += " [Warning: Very short melody - verify accuracy]"
-            
-            return result
-            
-        except json.JSONDecodeError as exc:
-            logger.error(f"Gemini returned invalid JSON for '{query}': {exc}")
-            logger.error(f"Raw response: {resp.text if resp else 'None'}")
-            return {"found": False, "error": "invalid_json", "notes": str(exc)}
-        except Exception as exc:
-            logger.error("Gemini song lookup failed: %s", exc)
-            return {"found": False, "error": str(exc)}
+        return {
+            "found": False,
+            "confidence": "low",
+            "notes": (
+                "This method has been deprecated. "
+                "Please use the recording feature where you sing/hum the song yourself. "
+                "This ensures legal compliance and better accuracy."
+            ),
+            "error": "use_recording_instead"
+        }
