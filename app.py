@@ -168,6 +168,93 @@ def create_app() -> Flask:
         note_names = [midi_to_note_name(n.get("midi")) for n in notes]
         return jsonify({"numbers": numbers, "note_names": note_names})
 
+
+    @app.route("/api/song/analyze-recording", methods=["POST"])
+    @rate_limited
+    def analyze_recording():
+        """
+        Analyze a user's audio recording to extract melody as scale degrees.
+        User records themselves singing/humming, we analyze it.
+        
+        Expects:
+        - audio file in request.files['audio']
+        - song_title (optional) in request.form
+        """
+        if 'audio' not in request.files:
+            return (
+                jsonify({
+                    "error": "invalid_input",
+                    "message": "No audio file provided. Please upload an audio file."
+                }),
+                400,
+            )
+        
+        audio_file = request.files['audio']
+        song_title = request.form.get('song_title', 'Your Recording')
+        
+        # Read audio data
+        audio_data = audio_file.read()
+        
+        if len(audio_data) == 0:
+            return (
+                jsonify({
+                    "error": "invalid_input",
+                    "message": "Audio file is empty"
+                }),
+                400,
+            )
+        
+        # Analyze with Gemini
+        result = gemini.analyze_user_recording(audio_data, song_title)
+        
+        if not result.get("found"):
+            error = result.get("error", "unknown")
+            notes = result.get("notes", "")
+            
+            return (
+                jsonify({
+                    "found": False,
+                    "error": error,
+                    "message": "Could not extract melody from recording. Try recording again with clearer audio.",
+                    "notes": notes
+                }),
+                200,  # Not a server error, just couldn't detect melody
+            )
+        
+        # Success - melody detected
+        numbers = result.get("numbers", [])
+        key = result.get("key", "C")
+        mode = result.get("mode", "major")
+        
+        # Convert scale degrees to note names
+        note_names = []
+        for token in numbers:
+            try:
+                from services import pd_library
+                note_name = pd_library.number_to_note_name(token, key, mode)
+                note_names.append(note_name)
+            except:
+                note_names.append(str(token))
+        
+        # Create a song ID from the title
+        song_id = song_title.lower().replace(" ", "_").replace("'", "")
+        
+        return jsonify({
+            "found": True,
+            "song_id": song_id,
+            "canonical_title": song_title,
+            "title": song_title,
+            "key": key,
+            "mode": mode,
+            "numbers": numbers,
+            "note_names": note_names,
+            "tempo_bpm": result.get("tempo_bpm", 100),
+            "confidence": result.get("confidence", "unknown"),
+            "notes": result.get("notes", ""),
+            "source": "user_recording",
+            "message": f"Successfully analyzed your recording! Detected {len(numbers)} notes."
+        })
+
     @app.route("/api/coach/exercise", methods=["POST", "GET"])
     @rate_limited
     def coach_exercise():
